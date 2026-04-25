@@ -19,6 +19,8 @@
         .btn { pointer-events: auto; padding: 12px 24px; background: #ff9f43; color: white; border: none; border-radius: 50px; font-size: 16px; font-weight: bold; cursor: pointer; transition: transform 0.2s; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
         .btn:hover { transform: scale(1.05); background: #e67e22; }
         #btn-quiz { position: absolute; bottom: 30px; right: 30px; }
+        #btn-pause { position: absolute; bottom: 85px; right: 30px; background: #e74c3c; }
+        #btn-pause:hover { background: #c0392b; }
         #credit-box { position: absolute; bottom: 20px; left: 20px; font-size: 14px; color: rgba(255,255,255,0.7); z-index: 5; pointer-events: auto; background: rgba(0,0,0,0.3); padding: 8px 15px; border-radius: 20px; }
         #credit-box a { color: #00d2ff; text-decoration: none; font-weight: bold; }
         .floating-label { position: absolute; color: white; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; pointer-events: none; opacity: 0; transition: opacity 0.5s; }
@@ -49,7 +51,7 @@
             <input type="range" id="trans-slider" min="10" max="100" value="100">
         </div>
 
-        <div id="credit-box">Credit by: <a href="https://www.instagram.com/produktifid_76/" target="_blank">ProduktifId</a></div>
+        <div id="credit-box">Credit by: <a href="https://www.instagram.com/hamzahalhusaini76/" target="_blank">Hamzah Al Husaini</a></div>
         
         <div id="lbl-ocean" class="floating-label">Laut (Evaporasi)</div>
         <div id="lbl-trans" class="floating-label">Hutan (Transpirasi)</div>
@@ -58,6 +60,7 @@
         <div id="lbl-runoff" class="floating-label">Runoff (Permukaan)</div>
         <div id="lbl-infil" class="floating-label">Infiltrasi (Bawah Tanah)</div>
 
+        <button id="btn-pause" class="btn">Pause Simulasi</button>
         <button id="btn-quiz" class="btn" onclick="startQuiz()">Mulai Kuis Pengetahuan</button>
     </div>
 
@@ -89,23 +92,24 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
         let scene, camera, renderer, controls;
-        let mountainMesh, oceanMesh;
+        let mountainMesh, oceanMesh, sunMesh, riverMesh;
         let clouds = [], rainSystem, steamSystem, transSystem;
         let runoffSystem, infiltrationSystem;
         let cycleTimer = 0;
         const CYCLE_DURATION = 28;
         let isSimulating = true;
+        let isPaused = false;
         let audioCtx;
 
-        // --- SETUP AUDIO DARI SUMBER ONLINE ---
-let soundRain = new Audio('https://assets.mixkit.co/active_storage/sfx/2505/2505-preview.mp3'); // Suara Hujan
-let soundFlow = new Audio('https://assets.mixkit.co/active_storage/sfx/1231/1231-preview.mp3'); // Suara Aliran Air
-let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/1117-preview.mp3'); // Suara Angin/Mendung
+        let soundRain = new Audio('https://assets.mixkit.co/active_storage/sfx/2505/2505-preview.mp3');
+        let soundFlow = new Audio('https://assets.mixkit.co/active_storage/sfx/1231/1231-preview.mp3');
+        let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/1117-preview.mp3');
 
         const termDisplay = document.getElementById('term-display');
         const descDisplay = document.getElementById('desc-display');
         const transSlider = document.getElementById('trans-slider');
         const transVal = document.getElementById('trans-val');
+        const btnPause = document.getElementById('btn-pause');
 
         const labels = {
             ocean: document.getElementById('lbl-ocean'),
@@ -137,7 +141,7 @@ let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/111
             scene.fog = new THREE.FogExp2(0x87CEEB, 0.0025);
 
             camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 1, 1000);
-            camera.position.set(0, 60, 160);
+            camera.position.set(0, 80, 180);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -148,14 +152,17 @@ let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/111
             controls.enableDamping = true;
             controls.maxPolarAngle = Math.PI / 2 - 0.05;
 
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
             scene.add(ambientLight);
-            const dirLight = new THREE.DirectionalLight(0xffdfba, 1.2);
-            dirLight.position.set(50, 100, 50);
+            
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(-50, 100, 50);
             scene.add(dirLight);
 
+            createSun();
             createRealisticTerrain();
             createOcean();
+            createRiver(); // Tambahkan objek sungai terpisah
             createVegetation();
             createClouds();
             createRain();
@@ -170,91 +177,92 @@ let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/111
                 transVal.innerText = val;
                 mountainMesh.material.opacity = val / 100;
             });
+
+            btnPause.addEventListener('click', (e) => {
+                isPaused = !isPaused;
+                if (isPaused) {
+                    btnPause.innerText = "Play Simulasi";
+                    btnPause.style.background = "#2ecc71";
+                    stopAllSounds();
+                } else {
+                    btnPause.innerText = "Pause Simulasi";
+                    btnPause.style.background = "#e74c3c";
+                }
+            });
         }
 
-        // --- FUNGSI AUDIO LOGIC ---
-        function stopAllSounds() {
-            soundRain.pause(); 
-            soundFlow.pause(); 
-            soundCloud.pause();
+        // --- MATAHARI 3D BERPIJAR ---
+        function createSun() {
+            const sunGeometry = new THREE.SphereGeometry(14, 32, 32);
+            const sunMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xffdd00, 
+                emissive: 0xffaa00, 
+                emissiveIntensity: 2 
+            });
+            sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
+            sunMesh.position.set(100, 120, -100);
+            
+            // Tambahkan cahaya titik agar matahari menerangi area sekitar secara lokal
+            const sunLight = new THREE.PointLight(0xffdfba, 2, 500);
+            sunMesh.add(sunLight);
+            
+            scene.add(sunMesh);
         }
 
-        function animate() {
-            if(!isSimulating) return;
-            requestAnimationFrame(animate);
-            cycleTimer += 0.032; if (cycleTimer > CYCLE_DURATION) cycleTimer = 0;
-            const t = cycleTimer;
+        // --- LAUT BERGELOMBANG ---
+        function createOcean() {
+            // Geometri ditingkatkan segmennya (128x128) agar gelombang halus
+            const geometry = new THREE.PlaneGeometry(1200, 1200, 128, 128);
+            const material = new THREE.MeshPhongMaterial({ 
+                color: 0x006994, 
+                transparent: true, 
+                opacity: 0.85,
+                shininess: 90,
+                specular: 0x111111
+            });
+            oceanMesh = new THREE.Mesh(geometry, material);
+            oceanMesh.rotation.x = -Math.PI / 2;
+            oceanMesh.position.y = 3;
+            scene.add(oceanMesh);
+        }
 
-            steamSystem.visible = transSystem.visible = rainSystem.visible = runoffSystem.visible = false;
-            infiltrationSystem.visible = false; 
-            Object.values(labels).forEach(l => l.style.opacity = 0);
-
-            if (t < 7) {
-                // EVAPORASI & TRANSPIRASI
-                stopAllSounds();
-                termDisplay.innerText = "EVAPORASI & TRANSPIRASI";
-                descDisplay.innerText = "Air menguap dari laut dan tumbuhan ke atmosfer.";
-                steamSystem.visible = transSystem.visible = true;
-                [steamSystem, transSystem].forEach(sys => {
-                    const pos = sys.geometry.attributes.position.array;
-                    for(let i=1; i<pos.length; i+=3) { pos[i] += 0.18; if(pos[i] > 60) pos[i] = 5; }
-                    sys.geometry.attributes.position.needsUpdate = true;
-                });
-                labels.ocean.style.opacity = labels.trans.style.opacity = 1;
-            } 
-            else if (t < 14) {
-                // KONDENSASI (SUARA ANGIN)
-                if(soundCloud.paused) { stopAllSounds(); soundCloud.play().catch(e=>{}); }
-                termDisplay.innerText = "KONDENSASI";
-                descDisplay.innerText = "Uap air mendingin dan membentuk awan mendung.";
-                const p = (t-7)/7;
-                clouds.forEach(c => { 
-                    c.scale.setScalar(c.userData.baseScale * (1+p*0.5)); 
-                    const g = 1 - p*0.6; c.material.color.setRGB(g,g,g); 
-                });
-                labels.cloud.style.opacity = 1;
-            }
-            else if (t < 21) {
-                // PRESIPITASI (SUARA HUJAN)
-                if(soundRain.paused) { stopAllSounds(); soundRain.play().catch(e=>{}); }
-                termDisplay.innerText = "PRESIPITASI";
-                descDisplay.innerText = "Hujan turun ke permukaan bumi.";
-                rainSystem.visible = true;
-                const pos = rainSystem.geometry.attributes.position.array;
-                for(let i=1; i<pos.length; i+=3) { pos[i] -= 2.2; if(pos[i] < 0) pos[i] = 85; }
-                rainSystem.geometry.attributes.position.needsUpdate = true;
-                labels.rain.style.opacity = 1;
-            }
-            else {
-                // RUNOFF & INFILTRASI (SUARA AIR MENGALIR)
-                if(soundFlow.paused) { stopAllSounds(); soundFlow.play().catch(e=>{}); }
-                termDisplay.innerText = "RUNOFF & INFILTRASI";
-                descDisplay.innerText = "Air mengalir di permukaan dan meresap ke tanah.";
-                runoffSystem.visible = true;
-                infiltrationSystem.visible = (mountainMesh.material.opacity < 1.0);
+        // --- SUNGAI DINAMIS ---
+        function createRiver() {
+            const geometry = new THREE.PlaneGeometry(300, 300, 128, 128);
+            const positions = geometry.attributes.position;
+            
+            // Sembunyikan bagian yang bukan sungai (buat transparan total)
+            const alphas = new Float32Array(positions.count);
+            for (let i = 0; i < positions.count; i++) {
+                const x = positions.getX(i);
+                const y = positions.getY(i);
+                const h = getTerrainHeight(x, y);
                 
-                const rPos = runoffSystem.geometry.attributes.position.array, rV = runoffSystem.geometry.userData.velocity;
-                for(let i=0; i<rPos.length/3; i++){
-                    const idx=i*3; rPos[idx]+=rV[idx]; rPos[idx+2]+=rV[idx+2];
-                    const h = getTerrainHeight(rPos[idx], rPos[idx+2]);
-                    if(h < 4) { rPos[idx]=Math.random()*30-15; rPos[idx+2]=Math.random()*30-15; }
-                    rPos[idx+1] = h+0.6;
+                let expectedX = Math.sin(y * 0.08) * 12;
+                let distToRiver = Math.abs(x - expectedX);
+                
+                if (y < 40 && y > -80 && distToRiver < 3.2 && h > 2) {
+                    positions.setZ(i, h + 0.3); // Sedikit di atas tanah
+                    alphas[i] = 1.0;
+                } else {
+                    positions.setZ(i, -20); // Buang ke bawah
+                    alphas[i] = 0.0;
                 }
-                runoffSystem.geometry.attributes.position.needsUpdate = true;
-
-                const iPos = infiltrationSystem.geometry.attributes.position.array, iV = infiltrationSystem.geometry.userData.velocity;
-                for(let i=0; i<iPos.length/3; i++){
-                    const idx=i*3; iPos[idx]+=iV[idx]; iPos[idx+1]+=iV[idx+1]; iPos[idx+2]+=iV[idx+2];
-                    const h = getTerrainHeight(iPos[idx], iPos[idx+2]);
-                    if(iPos[idx+1] < h-20 || h < 4) { iPos[idx]=Math.random()*20-10; iPos[idx+2]=Math.random()*20-10; iPos[idx+1]=h-2; }
-                }
-                infiltrationSystem.geometry.attributes.position.needsUpdate = true;
-                labels.runoff.style.opacity = labels.infil.style.opacity = 1;
             }
-            updateLabelsPosition(); controls.update(); renderer.render(scene, camera);
+            geometry.setAttribute('alpha', new THREE.BufferAttribute(alphas, 1));
+            
+            const material = new THREE.MeshPhongMaterial({ 
+                color: 0x00d2ff, 
+                transparent: true, 
+                opacity: 0.9,
+                shininess: 100
+            });
+            
+            riverMesh = new THREE.Mesh(geometry, material);
+            riverMesh.rotation.x = -Math.PI / 2;
+            scene.add(riverMesh);
         }
 
-        // --- SISA FUNGSI VISUAL (TIDAK BERUBAH) ---
         function createRealisticTerrain() {
             const geometry = new THREE.PlaneGeometry(300, 300, 128, 128);
             const count = geometry.attributes.position.count;
@@ -264,8 +272,9 @@ let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/111
                 const y = geometry.attributes.position.getY(i);
                 const height = getTerrainHeight(x, y);
                 geometry.attributes.position.setZ(i, height);
+                
                 let color = new THREE.Color();
-                if (height > 60) color.set(0xffffff);
+                if (height > 60) color.set(0xffffff); 
                 else if (height > 5) color.set(0x2d8a3e);
                 else color.set(0xc2b280);
                 colors.push(color.r, color.g, color.b);
@@ -278,15 +287,6 @@ let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/111
             scene.add(mountainMesh);
         }
 
-        function createOcean() {
-            const geometry = new THREE.PlaneGeometry(1000, 1000, 32, 32);
-            const material = new THREE.MeshPhongMaterial({ color: 0x006994, transparent: true, opacity: 0.8 });
-            oceanMesh = new THREE.Mesh(geometry, material);
-            oceanMesh.rotation.x = -Math.PI / 2;
-            oceanMesh.position.y = 3;
-            scene.add(oceanMesh);
-        }
-
         function createVegetation() {
             const group = new THREE.Group();
             for (let i = 0; i < 150; i++) {
@@ -294,7 +294,9 @@ let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/111
                 const r = Math.random() * 50 + 20;
                 const x = Math.cos(a)*r; const z = Math.sin(a)*r;
                 const h = getTerrainHeight(x, z);
-                if (h > 10 && h < 55) {
+                let expectedX = Math.sin(z * 0.08) * 12;
+                let isRiver = (z < 40 && z > -80 && Math.abs(x - expectedX) < 5);
+                if (h > 10 && h < 55 && !isRiver) {
                     const tree = new THREE.Group();
                     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 3), new THREE.MeshLambertMaterial({color: 0x8B4513}));
                     trunk.position.y = 1.5;
@@ -364,6 +366,105 @@ let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/111
             infiltrationSystem.visible = false; scene.add(infiltrationSystem);
         }
 
+        function stopAllSounds() { soundRain.pause(); soundFlow.pause(); soundCloud.pause(); }
+
+        function animate() {
+            if(!isSimulating) return;
+            requestAnimationFrame(animate);
+            
+            const time = Date.now() * 0.001;
+
+            // ANIMASI LAUT (OMBAK)
+            if (oceanMesh) {
+                const pos = oceanMesh.geometry.attributes.position;
+                for (let i = 0; i < pos.count; i++) {
+                    const x = pos.getX(i);
+                    const y = pos.getY(i);
+                    const wave = Math.sin(x * 0.05 + time) * 1.5 + Math.cos(y * 0.05 + time * 0.8) * 1.5;
+                    pos.setZ(i, wave);
+                }
+                pos.needsUpdate = true;
+            }
+
+            // ANIMASI SUNGAI (MENGALIR)
+            if (riverMesh) {
+                const rPos = riverMesh.geometry.attributes.position;
+                for (let i = 0; i < rPos.count; i++) {
+                    const x = rPos.getX(i);
+                    const y = rPos.getY(i);
+                    let expectedX = Math.sin(y * 0.08) * 12;
+                    if (Math.abs(x - expectedX) < 4) {
+                        const ripple = Math.sin(y * 0.5 - time * 5) * 0.4;
+                        const originalH = getTerrainHeight(x, y);
+                        rPos.setZ(i, originalH + 0.4 + ripple);
+                    }
+                }
+                rPos.needsUpdate = true;
+            }
+
+            if (!isPaused) {
+                cycleTimer += 0.032; if (cycleTimer > CYCLE_DURATION) cycleTimer = 0;
+                const t = cycleTimer;
+                steamSystem.visible = transSystem.visible = rainSystem.visible = runoffSystem.visible = false;
+                infiltrationSystem.visible = false; 
+                Object.values(labels).forEach(l => l.style.opacity = 0);
+
+                if (t < 7) {
+                    stopAllSounds();
+                    termDisplay.innerText = "Evaporasi & Transpirasi";
+                    descDisplay.innerText = "Air menguap dari genangan air (Evaporasi) & tumbuhan (Transpirasi) ke atmosfer.";
+                    steamSystem.visible = transSystem.visible = true;
+                    [steamSystem, transSystem].forEach(sys => {
+                        const p = sys.geometry.attributes.position.array;
+                        for(let i=1; i<p.length; i+=3) { p[i]+=0.2; if(p[i]>60) p[i]=5; }
+                        sys.geometry.attributes.position.needsUpdate = true;
+                    });
+                    labels.ocean.style.opacity = labels.trans.style.opacity = 1;
+                } 
+                else if (t < 14) {
+                    if(soundCloud.paused) { stopAllSounds(); soundCloud.play().catch(e=>{}); }
+                    termDisplay.innerText = "Kondensasi";
+                    descDisplay.innerText = "Uap air mendingin dan membentuk awan hingga mencapai titik jenuh.";
+                    const p = (t-7)/7;
+                    clouds.forEach(c => { 
+                        c.scale.setScalar(c.userData.baseScale * (1+p*0.5)); 
+                        const g = 1 - p*0.6; c.material.color.setRGB(g,g,g); 
+                    });
+                    labels.cloud.style.opacity = 1;
+                }
+                else if (t < 21) {
+                    if(soundRain.paused) { stopAllSounds(); soundRain.play().catch(e=>{}); }
+                    termDisplay.innerText = "Presipitasi";
+                    descDisplay.innerText = "Hujan turun ke permukaan bumi.";
+                    rainSystem.visible = true;
+                    const p = rainSystem.geometry.attributes.position.array;
+                    for(let i=1; i<p.length; i+=3) { p[i]-=2.5; if(p[i]<0) p[i]=85; }
+                    rainSystem.geometry.attributes.position.needsUpdate = true;
+                    labels.rain.style.opacity = 1;
+                }
+                else {
+                    if(soundFlow.paused) { stopAllSounds(); soundFlow.play().catch(e=>{}); }
+                    termDisplay.innerText = "Runoff & Infiltrasi";
+                    descDisplay.innerText = "Air mengalir di permukaan (Runoff) & Meresap (Infiltrasi) ke tanah.";
+                    runoffSystem.visible = true;
+                    infiltrationSystem.visible = (mountainMesh.material.opacity < 1.0);
+                    const rP = runoffSystem.geometry.attributes.position.array, rV = runoffSystem.geometry.userData.velocity;
+                    for(let i=0; i<rP.length/3; i++){
+                        const idx=i*3; rP[idx]+=rV[idx]; rP[idx+2]+=rV[idx+2];
+                        const h = getTerrainHeight(rP[idx], rP[idx+2]);
+                        if(h < 4) { rP[idx]=Math.random()*30-15; rP[idx+2]=Math.random()*30-15; }
+                        rP[idx+1] = h+0.6;
+                    }
+                    runoffSystem.geometry.attributes.position.needsUpdate = true;
+                    labels.runoff.style.opacity = labels.infil.style.opacity = 1;
+                }
+            }
+
+            updateLabelsPosition(); 
+            controls.update(); 
+            renderer.render(scene, camera);
+        }
+
         function updateLabelsPosition() {
             const updateLbl = (v3, el) => {
                 const v = v3.clone().project(camera);
@@ -379,9 +480,8 @@ let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/111
         }
 
         function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
-        function initAudio() { audioCtx = new AudioContext(); }
+        function initAudio() { if(!audioCtx) audioCtx = new AudioContext(); }
 
-        // --- SISTEM KUIS TERINTEGRASI ---
         const questions = [
             { q: "Apa proses penguapan air dari laut?", opts: ["Infiltrasi", "Evaporasi", "Kondensasi", "Presipitasi"], a: 1 },
             { q: "Proses penguapan air melalui tumbuhan disebut?", opts: ["Transpirasi", "Sublimasi", "Runoff", "Adveksi"], a: 0 },
@@ -394,62 +494,12 @@ let soundCloud = new Audio('https://assets.mixkit.co/active_storage/sfx/1117/111
             { q: "Lapisan tanah yang menyimpan air disebut?", opts: ["Atmosfer", "Akuifer", "Biosfer", "Litosfer"], a: 1 },
             { q: "Siklus air terjadi secara?", opts: ["Berhenti", "Berulang/Terus-menerus", "Satu kali", "Lambat"], a: 1 }
         ];
-
         let currentQ = 0, score = 0;
-
-        window.startQuiz = function() { 
-            stopAllSounds();
-            document.getElementById('sim-container').style.display = 'none'; 
-            document.getElementById('quiz-container').style.display = 'block'; 
-            isSimulating = false; currentQ=0; score=0;
-            document.getElementById('score').innerText = score;
-            loadQuestion(); 
-        };
-
-        function loadQuestion() {
-            const q = questions[currentQ];
-            document.getElementById('q-text').innerText = (currentQ + 1) + ". " + q.q;
-            const opts = document.getElementById('options'); opts.innerHTML = '';
-            document.getElementById('feedback').innerText = '';
-            document.getElementById('next-btn').style.display = 'none';
-
-            q.opts.forEach((o, i) => {
-                const b = document.createElement('div'); b.className = 'opt-btn'; b.innerText = o;
-                b.onclick = () => checkAnswer(i, b);
-                opts.appendChild(b);
-            });
-        }
-
-        function checkAnswer(idx, btn) {
-            const q = questions[currentQ];
-            const allBtns = document.querySelectorAll('.opt-btn');
-            allBtns.forEach(b => b.onclick = null);
-
-            if(idx === q.a) {
-                score += 10; document.getElementById('score').innerText = score;
-                btn.style.background = "#27ae60"; btn.style.color = "white";
-                document.getElementById('feedback').innerText = "BENAR! +10 Poin";
-                document.getElementById('feedback').className = "feedback correct";
-            } else {
-                btn.style.background = "#c0392b"; btn.style.color = "white";
-                allBtns[q.a].style.background = "#27ae60"; allBtns[q.a].style.color = "white";
-                document.getElementById('feedback').innerText = "SALAH!";
-                document.getElementById('feedback').className = "feedback wrong";
-            }
-            
-            if(currentQ < questions.length - 1) {
-                document.getElementById('next-btn').style.display = 'inline-block';
-            } else {
-                document.getElementById('feedback').innerText += " - KUIS SELESAI!";
-            }
-        }
-
+        window.startQuiz = function() { stopAllSounds(); document.getElementById('sim-container').style.display='none'; document.getElementById('quiz-container').style.display='block'; isSimulating=false; currentQ=0; score=0; document.getElementById('score').innerText=score; loadQuestion(); };
+        function loadQuestion() { const q=questions[currentQ]; document.getElementById('q-text').innerText=(currentQ+1)+". "+q.q; const opts=document.getElementById('options'); opts.innerHTML=''; document.getElementById('feedback').innerText=''; document.getElementById('next-btn').style.display='none'; q.opts.forEach((o,i)=>{const b=document.createElement('div'); b.className='opt-btn'; b.innerText=o; b.onclick=()=>checkAnswer(i,b); opts.appendChild(b);}); }
+        function checkAnswer(idx, btn) { const q=questions[currentQ]; const allBtns=document.querySelectorAll('.opt-btn'); allBtns.forEach(b=>b.onclick=null); if(idx===q.a){score+=10; document.getElementById('score').innerText=score; btn.style.background="#27ae60"; btn.style.color="white"; document.getElementById('feedback').innerText="BENAR! +10 Poin"; document.getElementById('feedback').className="feedback correct";} else {btn.style.background="#c0392b"; btn.style.color="white"; allBtns[q.a].style.background="#27ae60"; allBtns[q.a].style.color="white"; document.getElementById('feedback').innerText="SALAH!"; document.getElementById('feedback').className="feedback wrong";} if(currentQ<questions.length-1) document.getElementById('next-btn').style.display='inline-block'; else document.getElementById('feedback').innerText+=" - SELESAI!"; }
         window.nextQuestion = function() { currentQ++; loadQuestion(); };
-        window.backToSim = function() { 
-            document.getElementById('quiz-container').style.display = 'none'; 
-            document.getElementById('sim-container').style.display = 'block'; 
-            isSimulating = true; animate(); 
-        };
+        window.backToSim = function() { document.getElementById('quiz-container').style.display='none'; document.getElementById('sim-container').style.display='block'; isSimulating=true; animate(); };
     </script>
 </body>
 </html>
